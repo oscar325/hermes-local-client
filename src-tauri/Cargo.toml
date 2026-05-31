@@ -1,6 +1,6 @@
 [package]
 name = "hermes-local-client"
-version = "0.1.0"
+version = "1.0.0"
 description = "A fully local Hermes Client with rich messaging features"
 authors = ["Hermes Desktop Team"]
 edition = "2021"

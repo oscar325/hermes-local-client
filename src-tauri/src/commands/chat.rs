@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use std::sync::Mutex;
+use std::fs;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 // ============ 数据类型定义 ============
@@ -30,6 +32,41 @@ pub struct GatewayConfig {
     pub api_key: String,
 }
 
+// ============ 配置文件路径 ============
+
+fn get_config_path() -> PathBuf {
+    let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+    path.push("hermes-local-client");
+    fs::create_dir_all(&path).ok();
+    path.push("config.json");
+    path
+}
+
+// ============ 持久化存储函数 ============
+
+fn load_config_from_file() -> Option<GatewayConfig> {
+    let config_path = get_config_path();
+    if config_path.exists() {
+        match fs::read_to_string(&config_path) {
+            Ok(content) => {
+                serde_json::from_str(&content).ok()
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    }
+}
+
+fn save_config_to_file(config: &GatewayConfig) -> Result<(), String> {
+    let config_path = get_config_path();
+    let content = serde_json::to_string_pretty(config)
+        .map_err(|e| e.to_string())?;
+    fs::write(&config_path, content)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatResponse {
     pub response: String,
@@ -47,7 +84,20 @@ pub struct AppState {
 
 #[tauri::command]
 pub fn get_gateway_config(state: State<AppState>) -> Result<Option<GatewayConfig>, String> {
+    // 优先从内存获取，如果没有则从文件加载
     let config = state.gateway_config.lock().map_err(|e| e.to_string())?;
+    
+    if config.is_none() {
+        // 尝试从文件加载
+        drop(config); // 释放锁
+        let loaded_config = load_config_from_file();
+        if loaded_config.is_some() {
+            let mut config = state.gateway_config.lock().map_err(|e| e.to_string())?;
+            *config = loaded_config.clone();
+        }
+        return Ok(loaded_config);
+    }
+    
     Ok(config.clone())
 }
 
@@ -57,8 +107,14 @@ pub fn set_gateway_config(
     base_url: String,
     api_key: String,
 ) -> Result<(), String> {
-    let mut config = state.gateway_config.lock().map_err(|e| e.to_string())?;
-    *config = Some(GatewayConfig { base_url, api_key });
+    let config = GatewayConfig { base_url: base_url.clone(), api_key: api_key.clone() };
+    
+    // 保存到文件（持久化）
+    save_config_to_file(&config)?;
+    
+    // 同时保存到内存
+    let mut state_config = state.gateway_config.lock().map_err(|e| e.to_string())?;
+    *state_config = Some(GatewayConfig { base_url, api_key });
     Ok(())
 }
 
